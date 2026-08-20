@@ -276,13 +276,6 @@ python gaussianavatars/animate.py \
 Open the [real-time viewer](https://felixtaubner.github.io/cap4d/viewer/) (powered by Brush), click
 **Load file**, and upload `exported_animation.ply` from your output directory.
 
-Dependency graph:
-
-```
-01 ──> 03.a ──> 03 ──> 04 ───┐
-                             ├──> 05
-02 ──────────────────────────┘
-```
 
 ## Output layout
 
