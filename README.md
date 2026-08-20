@@ -1,25 +1,40 @@
-# CV18-ThesisProject
+# CAP4D Avatar Pipeline
 
-This repo runs the [CAP4D](https://felixtaubner.github.io/cap4d/) pipeline, turning one or more reference
+This repo runs the [CAP4D](https://felixtaubner.github.io/cap4d/) pipeline — turning one or more reference
 images (or a short reference video) into an animatable 4D portrait avatar, driven by a separate video.
 
 > CAP4D: Creating Animatable 4D Portrait Avatars with Morphable Multi-View Diffusion Models
 > Felix Taubner, Ruihang Zhang, Mathieu Tuli, David B. Lindell — CVPR 2025 (Oral)
 > [Project page](https://felixtaubner.github.io/cap4d/) · [Paper repo](https://github.com/felixtaubner/cap4d)
 
-CAP4D itself has no dependency on SLURM, it just needs to run on a machine (workstation, cloud VM, or
+CAP4D itself has no dependency on SLURM — it just needs to run on a machine (workstation, cloud VM, or
 a SLURM-managed cluster) that meets the GPU/CPU/RAM requirements below. This repo includes SLURM batch
 scripts for convenience when running on a shared HPC cluster, but the same commands run fine standalone.
 
 ## Requirements
 
 - NVIDIA GPU with CUDA support. Multi-view generation (step 2 below) uses all visible CUDA devices
-  automatically; more GPUs = faster generation.
+  automatically — more GPUs = faster generation.
 - **≥64 GB RAM recommended** for the MMDM image generation step; it can run for several hours.
 - Python 3.10 + conda.
 - A [FLAME](https://flame.is.tue.mpg.de/) account (free, for downloading FLAME blendshapes).
 
-## 1. Install CAP4D
+This pipeline needs **two separate conda environments**, because tracking/generation and avatar
+fitting/animation were validated against different CUDA/PyTorch builds and don't install cleanly
+together:
+
+| Env | Used for | CUDA / PyTorch | Requirements file |
+|-----|----------|-----------------|--------------------|
+| `cap4d_env` | Steps 1–3: Pixel3DMM tracking, MMDM generation | CUDA 11.8, torch 2.3.1 | [`requirements-tracking.txt`](requirements-tracking.txt) |
+| `cap4d_stable` | Steps 4–5: Gaussian avatar fitting, animation | CUDA 12.4+, torch 2.6.0 | [`requirements-avatar.txt`](requirements-avatar.txt) |
+
+Each file has PyTorch install instructions at the top — install the CUDA-matched PyTorch build
+first, then `pip install -r <file>`, since plain `pip install -r requirements.txt` won't reliably
+resolve the correct CUDA-tagged wheel on its own. See each file's header comment for the exact
+commands and for the system-level prerequisites (CUDA toolkit version, compiler) that pip can't
+install.
+
+## 1. Install CAP4D (tracking + generation environment)
 
 ```bash
 git clone https://github.com/felixtaubner/cap4d/
@@ -28,16 +43,25 @@ cd cap4d
 conda create --name cap4d_env python=3.10
 conda activate cap4d_env
 
-pip install -r requirements.txt
+# Install the CUDA-matched PyTorch build first (see requirements-tracking.txt header)
+pip install torch==2.3.1+cu118 torchvision==0.18.1 torchaudio==2.3.1 \
+    --extra-index-url https://download.pytorch.org/whl/cu118
+
+pip install -r requirements-tracking.txt
 export PYTHONPATH=$(realpath "./"):$PYTHONPATH
 ```
 
-Install PyTorch3D with CUDA support (build from source is recommended):
+Install PyTorch3D with CUDA support (build from source is recommended, so it's compiled against the
+torch build above):
 
 ```bash
 export FORCE_CUDA=1
 pip install "git+https://github.com/facebookresearch/pytorch3d.git@stable"
 ```
+
+Avatar fitting and animation (steps 4–5) use a **second environment**, `cap4d_stable` — set that up
+separately using [`requirements-avatar.txt`](requirements-avatar.txt) when you get there (see step 4c
+below).
 
 ## 2. Download FLAME and MMDM weights
 
@@ -97,6 +121,27 @@ bash scripts/track_video_pixel3dmm.sh examples/input/felix/images/cam0/ examples
 bash scripts/track_video_pixel3dmm.sh examples/input/animation/example_video.mp4 examples/output/custom/driving_video_tracking/
 ```
 
+> **If your reference input is a video file** (rather than a directory of frames, as above), apply this
+> fix before moving on to step b. `ReferenceDataset` expects `images/<camera_name>` with **no** file
+> extension — matching how a directory of frames is stored — but video-mode tracking saves the color
+> frames as `images/cam0.mp4` instead. Create an extensionless symlink pointing at it (decord's
+> `VideoReader` sniffs file content rather than the extension, so this is safe):
+>
+> ```bash
+> IMAGES_DIR=examples/output/custom/reference_tracking/images
+>
+> for video_file in "${IMAGES_DIR}"/*.mp4; do
+>     [ -e "${video_file}" ] || continue
+>     cam_name=$(basename "${video_file}" .mp4)
+>     link_path="${IMAGES_DIR}/${cam_name}"
+>     [ -e "${link_path}" ] && continue
+>     ln -s "$(basename "${video_file}")" "${link_path}"
+> done
+> ```
+>
+> (SLURM users: this is exactly what `03.a_fix_reference_images_symlink.sbatch` does — see the SLURM
+> section below.)
+
 **b. Generate multi-view images with the MMDM**
 
 ```bash
@@ -108,6 +153,27 @@ python cap4d/inference/generate_images.py \
 
 **c. Fit the Gaussian avatar**
 
+Switch to the second environment for this step and the next — GaussianAvatars compiles CUDA
+extensions at install time, and needs a newer compiler/CUDA than `cap4d_env` uses. If `conda activate`
+exposes an old system-default GCC, the build will fail; pin a newer compiler (e.g. GCC ≥11) and
+`CUDA_HOME` explicitly:
+
+```bash
+conda create --name cap4d_stable python=3.10
+conda activate cap4d_stable
+
+pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124 \
+    --extra-index-url https://download.pytorch.org/whl/cu124
+
+export CC=/path/to/gcc-13/bin/gcc      # adjust to your compiler install
+export CXX=/path/to/gcc-13/bin/g++
+export CUDA_HOME=/usr/local/cuda-12.8  # adjust to your CUDA install
+export PATH="${CUDA_HOME}/bin:${PATH}"
+
+pip install -r requirements-avatar.txt
+export PYTHONPATH=$(realpath "./"):$PYTHONPATH
+```
+
 ```bash
 python gaussianavatars/train.py \
     --config_path configs/avatar/default.yaml \
@@ -116,10 +182,8 @@ python gaussianavatars/train.py \
     --interval 5000
 ```
 
-> GaussianAvatars compiles CUDA extensions at install time. If `conda activate` exposes an old system
-> GCC and the build fails, pin a newer compiler (e.g. GCC ≥11) and `CUDA_HOME` explicitly before running
-> this step, either in the same env or a dedicated one — this repo's SLURM scripts (below) do this via a
-> separate `cap4d_stable` env with GCC 13.2 and CUDA 12.8 pinned.
+This repo's SLURM scripts (below) do the same compiler/CUDA pinning via a dedicated `cap4d_stable`
+env with GCC 13.2 and CUDA 12.8 loaded as cluster modules.
 
 **d. Animate the avatar**
 
@@ -157,6 +221,9 @@ batch scripts that wrap the same commands above:
 | 4 | `04_cap4d_fit_avatar.sbatch` | `cap4d_stable` | Gaussian avatar fitting; pins GCC 13.2 / CUDA 12.8 to build GaussianAvatars' CUDA extensions. |
 | 5 | `05_cap4d_animate.sbatch` | `cap4d_stable` | Animates the fitted avatar with the driving tracking data. |
 
+See [Requirements](#requirements) above for which requirements file (`requirements-tracking.txt` /
+`requirements-avatar.txt`) each env needs.
+
 Dependency graph:
 
 ```
@@ -186,9 +253,10 @@ environments and compiler pins; step 3 and step 4 can each run for hours, so a s
 waste GPU time already spent on earlier successful steps if a later step fails; and separate jobs let you
 resubmit just the failed stage instead of the whole pipeline.
 
-**Note on `03.a`:** video-mode reference tracking saves color frames as `images/cam0.mp4`, but
-`ReferenceDataset` expects an extensionless path with the same name (matching how directories of frames
-are stored). This script creates that symlink automatically.
+**Note on `03.a`:** only needed if your reference input is a video file rather than a directory of
+frames. Video-mode reference tracking saves color frames as `images/cam0.mp4`, but `ReferenceDataset`
+expects an extensionless path with the same name (matching how directories of frames are stored). This
+script creates that symlink automatically. See the callout in step 4a above for what it does and why.
 
 ## Output layout
 
