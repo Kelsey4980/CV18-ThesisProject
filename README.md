@@ -7,10 +7,6 @@ images (or a short reference video) into an animatable 4D portrait avatar, drive
 > Felix Taubner, Ruihang Zhang, Mathieu Tuli, David B. Lindell — CVPR 2025 (Oral)
 > [Project page](https://felixtaubner.github.io/cap4d/) · [Paper repo](https://github.com/felixtaubner/cap4d)
 
-CAP4D itself has no dependency on SLURM, it just needs to run on a machine (workstation, cloud VM, or
-a SLURM-managed cluster) that meets the GPU/CPU/RAM requirements below. This repo includes SLURM batch
-scripts for convenience when running on a shared HPC cluster, but the same commands run fine standalone.
-
 ## Requirements
 
 - NVIDIA GPU with CUDA support. Multi-view generation (step 2 below) uses all visible CUDA devices
@@ -170,7 +166,7 @@ ANIMATION_OUTPUT=${OUTPUT_ROOT}/animation
 mkdir -p "${OUTPUT_ROOT}"
 ```
 
-Option A: run the whole pipeline in one command (recommended)
+### Option A: run the whole pipeline in one command (recommended)
 
 run_pipeline.sh runs tracking, MMDM generation, avatar fitting, and animation back to back, including switching from cap4d_env to cap4d_stable partway through, and applying the reference symlink fix automatically if needed:
 
@@ -221,9 +217,7 @@ bash scripts/track_video_pixel3dmm.sh "${DRIVING_INPUT}" "${DRIVING_TRACKING}"
 >     ln -s "$(basename "${video_file}")" "${link_path}"
 > done
 > ```
->
-> (SLURM users: this is exactly what `03.a_fix_reference_images_symlink.sbatch` does, see the SLURM
-> section below.)
+
 
 **b. Generate multi-view images with the MMDM**
 
@@ -265,8 +259,6 @@ python gaussianavatars/train.py \
     --interval 5000
 ```
 
-This repo's SLURM scripts (below) do the same compiler/CUDA pinning via a dedicated `cap4d_stable`
-env with GCC 13.2 and CUDA 12.8 loaded as cluster modules.
 
 **d. Animate the avatar**
 
@@ -284,23 +276,6 @@ python gaussianavatars/animate.py \
 Open the [real-time viewer](https://felixtaubner.github.io/cap4d/viewer/) (powered by Brush), click
 **Load file**, and upload `exported_animation.ply` from your output directory.
 
-## Running on a SLURM cluster (optional)
-
-If you're running on a SLURM-managed HPC cluster rather than a standalone machine, this repo includes
-batch scripts that wrap the same commands above:
-
-| Step | Script | Env | Notes |
-|------|--------|-----|-------|
-| 1 | `01_cap4d_track_reference.sbatch` | `cap4d_env` | Pixel3DMM tracking on the reference image/video. |
-| 2 | `02_cap4d_track_driving.sbatch` | `cap4d_env` | Pixel3DMM tracking on the driving video. Independent of step 1. |
-| 3a | `03.a_fix_reference_images_symlink.sbatch` | `cap4d_env` | Fixes reference image naming for video-mode tracking (see note below). |
-| 3 | `03_cap4d_generate_mmdm.sbatch` | `cap4d_env` | MMDM multi-view generation. Can take hours; wants >64 GB RAM. |
-| 4 | `04_cap4d_fit_avatar.sbatch` | `cap4d_stable` | Gaussian avatar fitting; pins GCC 13.2 / CUDA 12.8 to build GaussianAvatars' CUDA extensions. |
-| 5 | `05_cap4d_animate.sbatch` | `cap4d_stable` | Animates the fitted avatar with the driving tracking data. |
-
-See [Requirements](#requirements) above for which requirements file (`requirements-tracking.txt` /
-`requirements-avatar.txt`) each env needs.
-
 Dependency graph:
 
 ```
@@ -308,39 +283,6 @@ Dependency graph:
                              ├──> 05
 02 ──────────────────────────┘
 ```
-
-Update `CAP4D_PATH`, `PIXEL3DMM_PATH`, and input paths near the top of each `.sbatch` file to match your
-setup (same idea as the "Set your paths" block above; those are the only lines you should need to edit).
-
-### Run all five steps together (recommended)
-
-`submit_pipeline.sh` submits every step with the correct SLURM `--dependency` ordering in one go, so you
-don't have to submit or track each job by hand:
-
-```bash
-chmod +x submit_pipeline.sh
-./submit_pipeline.sh
-```
-
-Track progress with `squeue -u $USER`.
-
-### Or submit an individual step
-
-Useful for rerunning just one stage, e.g. after fixing a config and re-fitting the avatar:
-
-```bash
-sbatch 04_cap4d_fit_avatar.sbatch
-```
-
-**Why separate SLURM jobs instead of one script:** steps 1–3 and steps 4–5 use different conda
-environments and compiler pins; step 3 and step 4 can each run for hours, so a single combined job would
-waste GPU time already spent on earlier successful steps if a later step fails; and separate jobs let you
-resubmit just the failed stage instead of the whole pipeline.
-
-**Note on `03.a`:** only needed if your reference input is a video file rather than a directory of
-frames. Video-mode reference tracking saves color frames as `images/cam0.mp4`, but `ReferenceDataset`
-expects an extensionless path with the same name (matching how directories of frames are stored). This
-script creates that symlink automatically. See the callout in step 4a above for what it does and why.
 
 ## Output layout
 
