@@ -129,14 +129,23 @@ ANIMATION_OUTPUT=${OUTPUT_ROOT}/animation
 mkdir -p "${OUTPUT_ROOT}"
 ```
 
-### Option A: run the whole pipeline in one command (convenience)
+Option A: run the whole pipeline in one command (recommended)
 
-For most users, this is the easiest way to go. It runs tracking, MMDM generation, avatar fitting, and
-animation back to back:
+run_pipeline.sh runs tracking, MMDM generation, avatar fitting, and animation back to back, including switching from cap4d_env to cap4d_stable partway through, and applying the reference symlink fix automatically if needed:
 
 ```bash
-bash scripts/generate_avatar.sh "${REFERENCE_INPUT}" "${OUTPUT_ROOT}" default "${DRIVING_INPUT}"
+chmod +x run_pipeline.sh
+bash run_pipeline.sh
 ```
+
+Edit the path block at the top of run_pipeline.sh first (same variables as above, plus a few system-specific settings for your compiler/CUDA install. See the comments in the file).
+
+> Why not scripts/generate_avatar.sh? Upstream's own "run everything" script assumes
+> a single conda environment can handle the whole pipeline. On this setup, that's not true:
+> Gaussian avatar fitting needs a newer compiler/CUDA to build GaussianAvatars' CUDA extensions
+> than tracking/MMDM generation does (see Requirements), so generate_avatar.sh will very likely
+> fail partway through, after already spending the hours-long MMDM generation step.
+> run_pipeline.sh does the same job but switches environments at the right point.
 
 Use Option B instead if you want to inspect/rerun individual stages, or if your `REFERENCE_INPUT` is a
 video file (see the symlink note in step a below, which `generate_avatar.sh` does not apply automatically).
@@ -300,7 +309,7 @@ examples/output/<sample_name>/
 ├── driving_tracking/     # Step 2 output
 ├── mmdm/                 # Step 3 output (reference_images/, generated_images/)
 ├── avatar/               # Step 4 output (fitted Gaussian avatar)
-└── animation/             # Step 5 output, incl. exported_animation.ply
+└── animation/            # Step 5 output, incl. exported_animation.ply
 ```
 
 ## Related resources
