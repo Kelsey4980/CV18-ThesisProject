@@ -1,20 +1,20 @@
 # CAP4D Avatar Pipeline
 
-This repo runs the [CAP4D](https://felixtaubner.github.io/cap4d/) pipeline — turning one or more reference
+This repo runs the [CAP4D](https://felixtaubner.github.io/cap4d/) pipeline, turning one or more reference
 images (or a short reference video) into an animatable 4D portrait avatar, driven by a separate video.
 
 > CAP4D: Creating Animatable 4D Portrait Avatars with Morphable Multi-View Diffusion Models
 > Felix Taubner, Ruihang Zhang, Mathieu Tuli, David B. Lindell — CVPR 2025 (Oral)
 > [Project page](https://felixtaubner.github.io/cap4d/) · [Paper repo](https://github.com/felixtaubner/cap4d)
 
-CAP4D itself has no dependency on SLURM — it just needs to run on a machine (workstation, cloud VM, or
+CAP4D itself has no dependency on SLURM, it just needs to run on a machine (workstation, cloud VM, or
 a SLURM-managed cluster) that meets the GPU/CPU/RAM requirements below. This repo includes SLURM batch
 scripts for convenience when running on a shared HPC cluster, but the same commands run fine standalone.
 
 ## Requirements
 
 - NVIDIA GPU with CUDA support. Multi-view generation (step 2 below) uses all visible CUDA devices
-  automatically — more GPUs = faster generation.
+  automatically; more GPUs = faster generation.
 - **≥64 GB RAM recommended** for the MMDM image generation step; it can run for several hours.
 - Python 3.10 + conda.
 - A [FLAME](https://flame.is.tue.mpg.de/) account (free, for downloading FLAME blendshapes).
@@ -28,7 +28,7 @@ together:
 | `cap4d_env` | Steps 1–3: Pixel3DMM tracking, MMDM generation | CUDA 11.8, torch 2.3.1 | [`requirements-tracking.txt`](requirements-tracking.txt) |
 | `cap4d_stable` | Steps 4–5: Gaussian avatar fitting, animation | CUDA 12.4+, torch 2.6.0 | [`requirements-avatar.txt`](requirements-avatar.txt) |
 
-Each file has PyTorch install instructions at the top — install the CUDA-matched PyTorch build
+Each file has PyTorch install instructions at the top; install the CUDA-matched PyTorch build
 first, then `pip install -r <file>`, since plain `pip install -r requirements.txt` won't reliably
 resolve the correct CUDA-tagged wheel on its own. See each file's header comment for the exact
 commands and for the system-level prerequisites (CUDA toolkit version, compiler) that pip can't
@@ -59,7 +59,7 @@ export FORCE_CUDA=1
 pip install "git+https://github.com/facebookresearch/pytorch3d.git@stable"
 ```
 
-Avatar fitting and animation (steps 4–5) use a **second environment**, `cap4d_stable` — set that up
+Avatar fitting and animation (steps 4–5) use a **second environment**, `cap4d_stable`, set that up
 separately using [`requirements-avatar.txt`](requirements-avatar.txt) when you get there (see step 4c
 below).
 
@@ -86,13 +86,13 @@ python scripts/fixes/fix_flame_pickle.py --pickle_path data/assets/flame/flame20
 bash scripts/test_pipeline.sh
 ```
 
-Check `examples/debug_output/tesla/sequence_00/renders.mp4` — if it shows a blurry cartoon Tesla,
+Check `examples/debug_output/tesla/sequence_00/renders.mp4`, if it shows a blurry cartoon Tesla,
 the install is good.
 
 ## 4. Custom inference
 
 To run on your own images/video instead of the provided examples, first install Pixel3DMM for 3D face
-tracking (this step is separate from the main `cap4d_env`, and is prone to package version conflicts —
+tracking (this step is separate from the main `cap4d_env`, and is prone to package version conflicts,
 report issues upstream if you hit them):
 
 ```bash
@@ -104,31 +104,64 @@ export CAP4D_PATH=$(realpath "./")
 bash scripts/install_pixel3Dmm.sh
 ```
 
-Then run the pipeline stages in order:
+### Set your paths
+
+This is the **only place you need to edit paths**. Every command below reuses these variables as-is.
+
+```bash
+# ── Paths ──────────────────────────────────────────────────────────────────
+CAP4D_PATH=$(realpath "./")
+PIXEL3DMM_PATH=$(realpath "../path/to/pixel3dmm")
+
+REFERENCE_INPUT=/path/to/your/reference_images_or_video   # directory of images, OR a single video file
+DRIVING_INPUT=/path/to/your/driving_video.mp4              # optional — only needed if animating with a driving video
+
+OUTPUT_ROOT=${CAP4D_PATH}/examples/output/custom
+# ──────────────────────────────────────────────────────────────────────────
+
+export CAP4D_PATH PIXEL3DMM_PATH
+REFERENCE_TRACKING=${OUTPUT_ROOT}/reference_tracking
+DRIVING_TRACKING=${OUTPUT_ROOT}/driving_tracking
+MMDM_OUTPUT=${OUTPUT_ROOT}/mmdm
+AVATAR_OUTPUT=${OUTPUT_ROOT}/avatar
+ANIMATION_OUTPUT=${OUTPUT_ROOT}/animation
+
+mkdir -p "${OUTPUT_ROOT}"
+```
+
+### Option A: run the whole pipeline in one command (convenience)
+
+For most users, this is the easiest way to go. It runs tracking, MMDM generation, avatar fitting, and
+animation back to back:
+
+```bash
+bash scripts/generate_avatar.sh "${REFERENCE_INPUT}" "${OUTPUT_ROOT}" default "${DRIVING_INPUT}"
+```
+
+Use Option B instead if you want to inspect/rerun individual stages, or if your `REFERENCE_INPUT` is a
+video file (see the symlink note in step a below, which `generate_avatar.sh` does not apply automatically).
+
+### Option B: run each stage individually
 
 **a. Track reference images/video and (optionally) a driving video**
 
 ```bash
-export PIXEL3DMM_PATH=$(realpath "../path/to/pixel3dmm")
-export CAP4D_PATH=$(realpath "./")
+# Reference: a directory of frames is treated as discontinuous monocular images.
+# If REFERENCE_INPUT is a single file instead, it's treated as a continuous monocular video.
+bash scripts/track_video_pixel3dmm.sh "${REFERENCE_INPUT}" "${REFERENCE_TRACKING}"
 
-mkdir -p examples/output/custom/
-
-# Reference: a directory of frames is treated as discontinuous monocular images
-bash scripts/track_video_pixel3dmm.sh examples/input/felix/images/cam0/ examples/output/custom/reference_tracking/
-
-# Driving video: a single file is treated as a continuous monocular video
-bash scripts/track_video_pixel3dmm.sh examples/input/animation/example_video.mp4 examples/output/custom/driving_video_tracking/
+# Driving video (optional, only needed for step d)
+bash scripts/track_video_pixel3dmm.sh "${DRIVING_INPUT}" "${DRIVING_TRACKING}"
 ```
 
-> **If your reference input is a video file** (rather than a directory of frames, as above), apply this
-> fix before moving on to step b. `ReferenceDataset` expects `images/<camera_name>` with **no** file
-> extension — matching how a directory of frames is stored — but video-mode tracking saves the color
-> frames as `images/cam0.mp4` instead. Create an extensionless symlink pointing at it (decord's
-> `VideoReader` sniffs file content rather than the extension, so this is safe):
+> **If `REFERENCE_INPUT` is a video file** (rather than a directory of frames), apply this fix before
+> moving on to step b. `ReferenceDataset` expects `images/<camera_name>` with **no** file extension,
+> matching how a directory of frames is stored — but video-mode tracking saves the color frames as
+> `images/cam0.mp4` instead. Create an extensionless symlink pointing at it (decord's `VideoReader`
+> sniffs file content rather than the extension, so this is safe):
 >
 > ```bash
-> IMAGES_DIR=examples/output/custom/reference_tracking/images
+> IMAGES_DIR=${REFERENCE_TRACKING}/images
 >
 > for video_file in "${IMAGES_DIR}"/*.mp4; do
 >     [ -e "${video_file}" ] || continue
@@ -139,7 +172,7 @@ bash scripts/track_video_pixel3dmm.sh examples/input/animation/example_video.mp4
 > done
 > ```
 >
-> (SLURM users: this is exactly what `03.a_fix_reference_images_symlink.sbatch` does — see the SLURM
+> (SLURM users: this is exactly what `03.a_fix_reference_images_symlink.sbatch` does, see the SLURM
 > section below.)
 
 **b. Generate multi-view images with the MMDM**
@@ -147,13 +180,13 @@ bash scripts/track_video_pixel3dmm.sh examples/input/animation/example_video.mp4
 ```bash
 python cap4d/inference/generate_images.py \
     --config_path configs/generation/default.yaml \
-    --reference_data_path examples/output/custom/reference_tracking/ \
-    --output_path examples/output/custom/mmdm/
+    --reference_data_path "${REFERENCE_TRACKING}" \
+    --output_path "${MMDM_OUTPUT}"
 ```
 
 **c. Fit the Gaussian avatar**
 
-Switch to the second environment for this step and the next — GaussianAvatars compiles CUDA
+Switch to the second environment for this step and the next. GaussianAvatars compiles CUDA
 extensions at install time, and needs a newer compiler/CUDA than `cap4d_env` uses. If `conda activate`
 exposes an old system-default GCC, the build will fail; pin a newer compiler (e.g. GCC ≥11) and
 `CUDA_HOME` explicitly:
@@ -177,8 +210,8 @@ export PYTHONPATH=$(realpath "./"):$PYTHONPATH
 ```bash
 python gaussianavatars/train.py \
     --config_path configs/avatar/default.yaml \
-    --source_paths examples/output/custom/mmdm/reference_images/ examples/output/custom/mmdm/generated_images/ \
-    --model_path examples/output/custom/avatar/ \
+    --source_paths "${MMDM_OUTPUT}/reference_images/" "${MMDM_OUTPUT}/generated_images/" \
+    --model_path "${AVATAR_OUTPUT}" \
     --interval 5000
 ```
 
@@ -189,17 +222,11 @@ env with GCC 13.2 and CUDA 12.8 loaded as cluster modules.
 
 ```bash
 python gaussianavatars/animate.py \
-    --model_path examples/output/custom/avatar/ \
-    --target_animation_path examples/output/custom/driving_video_tracking/fit.npz \
-    --target_cam_trajectory_path examples/output/custom/driving_video_tracking/cam_static.npz \
-    --output_path examples/output/custom/animation_example/ \
+    --model_path "${AVATAR_OUTPUT}" \
+    --target_animation_path "${DRIVING_TRACKING}/fit.npz" \
+    --target_cam_trajectory_path "${DRIVING_TRACKING}/cam_static.npz" \
+    --output_path "${ANIMATION_OUTPUT}" \
     --export_ply 1 --compress_ply 0
-```
-
-Or run steps a–d together:
-
-```bash
-bash scripts/generate_avatar.sh {INPUT_VIDEO_PATH} {OUTPUT_PATH} [{QUALITY}] [{DRIVING_VIDEO_PATH}]
 ```
 
 ## 5. View the avatar
@@ -227,26 +254,33 @@ See [Requirements](#requirements) above for which requirements file (`requiremen
 Dependency graph:
 
 ```
-01 ──> 03.a ──> 03 ──> 04 ──┐
+01 ──> 03.a ──> 03 ──> 04 ───┐
                              ├──> 05
-02 ───────────────────────── ┘
+02 ──────────────────────────┘
 ```
 
-Update `CAP4D_PATH`, `PIXEL3DMM_PATH`, and input paths near the top of each script to match your setup,
-then submit the whole chain with correct SLURM `--dependency` ordering:
+Update `CAP4D_PATH`, `PIXEL3DMM_PATH`, and input paths near the top of each `.sbatch` file to match your
+setup (same idea as the "Set your paths" block above; those are the only lines you should need to edit).
+
+### Run all five steps together (recommended)
+
+`submit_pipeline.sh` submits every step with the correct SLURM `--dependency` ordering in one go, so you
+don't have to submit or track each job by hand:
 
 ```bash
 chmod +x submit_pipeline.sh
 ./submit_pipeline.sh
 ```
 
-Or submit an individual step, e.g. to rerun just avatar fitting:
+Track progress with `squeue -u $USER`.
+
+### Or submit an individual step
+
+Useful for rerunning just one stage, e.g. after fixing a config and re-fitting the avatar:
 
 ```bash
 sbatch 04_cap4d_fit_avatar.sbatch
 ```
-
-Track jobs with `squeue -u $USER`.
 
 **Why separate SLURM jobs instead of one script:** steps 1–3 and steps 4–5 use different conda
 environments and compiler pins; step 3 and step 4 can each run for hours, so a single combined job would
