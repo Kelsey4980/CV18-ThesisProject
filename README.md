@@ -89,6 +89,47 @@ bash scripts/test_pipeline.sh
 Check `examples/debug_output/tesla/sequence_00/renders.mp4`, if it shows a blurry cartoon Tesla,
 the install is good.
 
+## Organizing the dataset
+ 
+The dataset uses input from [NerSemble](https://tobias-kirschstein.github.io/nersemble/) (reference
+identities, multi-view) and [OuluVS2](http://www.ee.oulu.fi/research/imag/OuluVS2/) (driving sentences),
+this layout keeps everything for one identity together and scales cleanly to many identities:
+ 
+```
+data/
+├── <identity_id>/                    # one folder per subject
+│   ├── <identity_id>.ply             # reconstructed mesh/point cloud for this identity (reference only —
+│   │                                   # not consumed by the scripts in this repo)
+│   ├── <sentence_id>/                # one folder per driving sentence/utterance
+│   │   ├── camera_1/                 # frames or video, camera view 1
+│   │   ├── camera_2/                 # frames or video, camera view 2
+│   │   ├── camera_3/                 # frames or video, camera view 3
+│   │   └── transcription.txt         # ground-truth transcript for this sentence (reference only)
+│   │
+│   ├── <sentence_id_2>/
+│   │   └── ...
+│   │
+│   └── ...
+│   
+├── <identity_id_2>/
+│   └── ...
+```
+ 
+A few things worth knowing before you point the pipeline at this:
+ 
+- **Tracking is monocular** — `track_video_pixel3dmm.sh` takes a single video file or a single directory
+  of image frames per run, not a whole identity folder. So for a given run, `REFERENCE_INPUT` and
+  `DRIVING_INPUT` each point at one specific `<identity_id>/<sentence_id>/camera_N/` path (or a single
+  video file inside it), not the identity folder as a whole. If you want to compare results across
+  cameras or sentences, that means separate pipeline runs with different `REFERENCE_INPUT`/`DRIVING_INPUT`
+  values and separate `OUTPUT_ROOT`s.
+- **`<identity_id>.ply` and `transcription.txt` aren't read by any script here.** They're useful to keep
+  alongside the raw data for provenance (ground-truth geometry, ground-truth transcript for eval), but
+  nothing in this pipeline consumes them automatically.
+- Keep this raw dataset outside `examples/output/`, that directory is where the pipeline writes its own
+  per-run outputs (tracking, MMDM, avatar, animation), and you don't want raw inputs and generated outputs
+  mixed together.
+
 ## 4. Custom inference
 
 To run on your own images/video instead of the provided examples, first install Pixel3DMM for 3D face
